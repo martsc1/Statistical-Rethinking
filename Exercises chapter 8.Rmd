@@ -1,0 +1,686 @@
+Exercises chapter 8
+
+8.1. Building an interaction
+
+```{r}
+library(rethinking)
+data(rugged)
+d <- rugged
+# make log version of outcome
+d$log_gdp <- log( d$rgdppc_2000 )
+# extract countries with GDP data
+dd <- d[ complete.cases(d$rgdppc_2000) , ]
+# rescale variables
+dd$log_gdp_std <- dd$log_gdp / mean(dd$log_gdp)
+dd$rugged_std <- dd$rugged / max(dd$rugged)
+
+m8.1 <- quap( 
+  alist(
+    log_gdp_std ~ dnorm( mu , sigma ) ,
+    mu <- a + b*( rugged_std - 0.215 ) ,
+    a ~ dnorm( 1 , 1 ) ,
+    b ~ dnorm( 0 , 1 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=dd )
+
+set.seed(7) 
+prior <- extract.prior( m8.1 )
+
+# set up the plot dimensions
+plot( NULL , xlim=c(0,1) , ylim=c(0.5,1.5) ,
+xlab="ruggedness" , ylab="log GDP" )
+abline( h=min(dd$log_gdp_std) , lty=2 )
+abline( h=max(dd$log_gdp_std) , lty=2 )
+
+# draw 50 lines from the prior
+rugged_seq <- seq( from=-0.1 , to=1.1 , length.out=30 )
+mu <- link( m8.1 , post=prior , data=data.frame(rugged_std=rugged_seq) )
+for ( i in 1:50 ) lines( rugged_seq , mu[i,] , col=col.alpha("black",0.3) )
+
+m8.1 <- quap(
+  alist(
+    log_gdp_std ~ dnorm( mu , sigma ) ,
+    mu <- a + b*( rugged_std - 0.215 ) ,
+    a ~ dnorm( 1 , 0.1 ) ,
+    b ~ dnorm( 0 , 0.3 ) ,
+    sigma ~ dexp(1)
+) , data=dd )
+
+set.seed(7) 
+prior <- extract.prior( m8.1 )
+
+# set up the plot dimensions
+plot( NULL , xlim=c(0,1) , ylim=c(0.5,1.5) ,
+xlab="ruggedness" , ylab="log GDP" )
+abline( h=min(dd$log_gdp_std) , lty=2 )
+abline( h=max(dd$log_gdp_std) , lty=2 )
+
+# draw 50 lines from the prior
+rugged_seq <- seq( from=-0.1 , to=1.1 , length.out=30 )
+mu <- link( m8.1 , post=prior , data=data.frame(rugged_std=rugged_seq) )
+for ( i in 1:50 ) lines( rugged_seq , mu[i,] , col=col.alpha("black",0.3) )
+
+# make variable to index Africa (1) or not (2)
+dd$cid <- ifelse( dd$cont_africa==1 , 1 , 2 )
+
+m8.2 <- quap(
+  alist(
+    log_gdp_std ~ dnorm( mu , sigma ) ,
+    mu <- a[cid] + b*( rugged_std - 0.215 ) ,
+    a[cid] ~ dnorm( 1 , 0.1 ) ,
+    b ~ dnorm( 0 , 0.3 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=dd )
+
+compare( m8.1 , m8.2 )
+precis( m8.2 , depth=2 )
+
+post <- extract.samples(m8.2)
+diff_a1_a2 <- post$a[,1] - post$a[,2]
+PI( diff_a1_a2 )
+
+rugged.seq <- seq( from=-0.1 , to=1.1 , length.out=30 ) 
+# compute mu over samples, fixing cid=2 and then cid=1
+mu.NotAfrica <- link( m8.2 , data=data.frame( cid=2 , rugged_std=rugged.seq ) )
+mu.Africa <- link( m8.2 , data=data.frame( cid=1 , rugged_std=rugged.seq ) )
+# summarize to means and intervals
+mu.NotAfrica_mu <- apply( mu.NotAfrica , 2 , mean )
+mu.NotAfrica_ci <- apply( mu.NotAfrica , 2 , PI , prob=0.97 )
+mu.Africa_mu <- apply( mu.Africa , 2 , mean )
+mu.Africa_ci <- apply( mu.Africa , 2 , PI , prob=0.97 )
+
+
+m8.3 <- quap(
+  alist(
+    log_gdp_std ~ dnorm( mu , sigma ) ,
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+    a[cid] ~ dnorm( 1 , 0.1 ) ,
+    b[cid] ~ dnorm( 0 , 0.3 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=dd )
+
+precis( m8.3 , depth=2 )
+compare( m8.1 , m8.2 , m8.3 , func=PSIS )
+
+plot( PSIS( m8.3 , pointwise=TRUE )$k )
+
+# plot Africa - cid=1 
+d.A1 <- dd[ dd$cid==1 , ]
+plot( d.A1$rugged_std , d.A1$log_gdp_std , pch=16 , col=rangi2 ,
+xlab="ruggedness (standardized)" , ylab="log GDP (as proportion of mean)" ,
+xlim=c(0,1) )
+mu <- link( m8.3 , data=data.frame( cid=1 , rugged_std=rugged_seq ) )
+mu_mean <- apply( mu , 2 , mean )
+mu_ci <- apply( mu , 2 , PI , prob=0.97 )
+lines( rugged_seq , mu_mean , lwd=2 )
+shade( mu_ci , rugged_seq , col=col.alpha(rangi2,0.3) )
+mtext("African nations")
+
+# plot non-Africa - cid=2
+d.A0 <- dd[ dd$cid==2 , ]
+plot( d.A0$rugged_std , d.A0$log_gdp_std , pch=1 , col="black" ,
+xlab="ruggedness (standardized)" , ylab="log GDP (as proportion of mean)" ,
+xlim=c(0,1) )
+mu <- link( m8.3 , data=data.frame( cid=2 , rugged_std=rugged_seq ) )
+mu_mean <- apply( mu , 2 , mean )
+mu_ci <- apply( mu , 2 , PI , prob=0.97 )
+lines( rugged_seq , mu_mean , lwd=2 )
+shade( mu_ci , rugged_seq )
+mtext("Non-African nations")
+
+```
+
+8.2. Symmetry of interactions
+
+```{r}
+rugged_seq <- seq(from=-0.2,to=1.2,length.out=30) 
+muA <- link( m8.3 , data=data.frame(cid=1,rugged_std=rugged_seq) )
+muN <- link( m8.3 , data=data.frame(cid=2,rugged_std=rugged_seq) )
+delta <- muA - muN
+
+
+```
+
+8.3. Continuous interactions
+
+```{r}
+library(rethinking) 
+data(tulips)
+d <- tulips
+str(d)
+
+d$blooms_std <- d$blooms / max(d$blooms)
+d$water_cent <- d$water - mean(d$water)
+d$shade_cent <- d$shade - mean(d$shade)
+
+a <- rnorm( 1e4 , 0.5 , 0.25 ); sum( a < 0 | a > 1 ) / length( a )
+
+m8.4 <- quap( 
+  alist(
+    blooms_std ~ dnorm( mu , sigma ) ,
+    mu <- a + bw*water_cent + bs*shade_cent ,
+    a ~ dnorm( 0.5 , 0.25 ) ,
+    bw ~ dnorm( 0 , 0.25 ) ,
+    bs ~ dnorm( 0 , 0.25 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+
+m8.5 <- quap(
+  alist(
+    blooms_std ~ dnorm( mu , sigma ) ,
+    mu <- a + bw*water_cent + bs*shade_cent + bws*water_cent*shade_cent ,
+    a ~ dnorm( 0.5 , 0.25 ) ,
+    bw ~ dnorm( 0 , 0.25 ) ,
+    bs ~ dnorm( 0 , 0.25 ) ,
+    bws ~ dnorm( 0 , 0.25 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+
+par(mfrow=c(1,3)) # 3 plots in 1 row
+for ( s in -1:1 ) {
+  idx <- which( d$shade_cent==s )
+  plot( d$water_cent[idx] , d$blooms_std[idx] , xlim=c(-1,1) , ylim=c(0,1) ,
+    xlab="water" , ylab="blooms" , pch=16 , col=rangi2 )
+  mu <- link( m8.4 , data=data.frame( shade_cent=s , water_cent=-1:1 ) )
+  for ( i in 1:20 ) lines( -1:1 , mu[i,] , col=col.alpha("black",0.3) )
+}
+
+par(mfrow=c(1,3)) # 3 plots in 1 row
+for ( s in -1:1 ) {
+  idx <- which( d$shade_cent==s )
+  plot( d$water_cent[idx] , d$blooms_std[idx] , xlim=c(-1,1) , ylim=c(0,1) ,
+    xlab="water" , ylab="blooms" , pch=16 , col=rangi2 )
+  mu <- link( m8.5 , data=data.frame( shade_cent=s , water_cent=-1:1 ) )
+  for ( i in 1:20 ) lines( -1:1 , mu[i,] , col=col.alpha("black",0.3) )
+}
+
+set.seed(7) 
+prior <- extract.prior(m8.5)
+
+```
+
+
+###################### Exercises ###################### 
+
+### Easy
+
+8E1. For each of the causal relationships below, name a hypothetical third variable that would lead
+to an interaction effect.
+  (1) Bread dough rises because of yeast.
+  (2) Education leads to higher income.
+  (3) Gasoline makes a car go.
+
+1. Temperature
+2. Gender
+3. Battery
+
+8E2. Which of the following explanations invokes an interaction?
+  (1) Caramelizing onions requires cooking over low heat and making sure the onions do not
+  dry out.
+  (2) A car will go faster when it has more cylinders or when it has a better fuel injector.
+  (3) Most people acquire their political beliefs from their parents, unless they get them instead
+  from their friends.
+  (4) Intelligent animal species tend to be either highly social or have manipulative appendages
+  (hands, tentacles, etc.).
+
+1,3
+
+8E3. For each of the explanations in 8E2, write a linear model that expresses the stated relationship.
+
+```{r}
+library(dagitty)
+library(rethinking)
+dag1 <- dagitty( "dag{ Temperature -> Caramelization <- Dryness; Temperature -> Dryness}" )
+coordinates(dag1) <- list( x=c(Temperature=0,Dryness=0,Caramelization=1) , y=c(Temperature=0,Dryness=2,Caramelization=1) )
+drawdag( dag1 )
+
+mu <- a + b_heat * heat + b_water * water + b_heat_water * heat * water
+
+dag2 <- dagitty( "dag{ Cylinders -> Speed <- Fuelinjector}" )
+coordinates(dag2) <- list( x=c(Cylinders=0,Fuelinjector=0,Speed=1) , y=c(Cylinders=0,Fuelinjector=2,Speed=1) )
+drawdag( dag2 )
+
+```
+
+
+### Hard
+
+8H1. Return to the data(tulips) example in the chapter. Now include the bed variable as a predictor
+in the interaction model. Don’t interact bed with the other predictors; just include it as a main
+effect. Note that bed is categorical. So to use it properly, you will need to either construct dummy
+variables or rather an index variable, as explained in Chapter 5.
+
+```{r}
+data(tulips)
+d <- tulips
+
+d$blooms_std <- d$blooms / max(d$blooms)
+d$water_cent <- d$water - mean(d$water)
+d$shade_cent <- d$shade - mean(d$shade)
+
+
+H8.1 <- quap(
+  alist(
+    blooms_std ~ dnorm( mu , sigma ) ,
+    mu <- a + b[bed] + bw*water_cent + bs*shade_cent + bws*water_cent*shade_cent ,
+    a ~ dnorm( 0.5 , 0.25 ) ,
+    b[bed] ~ dnorm( 0.5 , 0.25 ) ,
+    bw ~ dnorm( 0 , 0.25 ) ,
+    bs ~ dnorm( 0 , 0.25 ) ,
+    bws ~ dnorm( 0 , 0.25 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+
+plot(precis(H8.1, depth=2))
+
+```
+
+
+
+
+8H2. Use WAIC to compare the model from 8H1 to a model that omits bed. What do you infer
+from this comparison? Can you reconcile the WAIC results with the posterior distribution of the bed
+coefficients?
+
+```{r}
+compare(m8.5, H8.1)
+coeftab(m8.5, H8.1)
+
+```
+The models perform very similar in regards to their predictive accuracy
+
+8H3. Consider again the data(rugged) data on economic development and terrain ruggedness,
+examined in this chapter. One of the African countries in that example, Seychelles, is far outside
+the cloud of other nations, being a rare country with both relatively high GDP and high ruggedness.
+Seychelles is also unusual, in that it is a group of islands far from the coast of mainland Africa, and
+its main economic activity is tourism.
+
+  (a) Focus on model m8.5 from the chapter. Use WAIC pointwise penalties and PSIS Pareto k
+  values to measure relative influence of each country. By these criteria, is Seychelles influencing the
+  results? Are there other nations that are relatively influential? If so, can you explain why?
+  
+```{r}
+data(rugged)
+d <- rugged
+# make log version of outcome
+d$log_gdp <- log( d$rgdppc_2000 )
+# extract countries with GDP data
+dd <- d[ complete.cases(d$rgdppc_2000) , ]
+# rescale variables
+dd$log_gdp_std <- dd$log_gdp / mean(dd$log_gdp)
+dd$rugged_std <- dd$rugged / max(dd$rugged)
+# make variable to index Africa (1) or not (2)
+dd$cid <- ifelse( dd$cont_africa==1 , 1 , 2 )
+
+m8.3 <- quap(
+  alist(
+    log_gdp_std ~ dnorm( mu , sigma ) ,
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+    a[cid] ~ dnorm( 1 , 0.1 ) ,
+    b[cid] ~ dnorm( 0 , 0.3 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=dd )
+
+set.seed(1)
+PSIS_m8.3 <- PSIS(m8.3,pointwise=TRUE)
+set.seed(1)
+WAIC_m8.3 <- WAIC(m8.3,pointwise=TRUE)
+
+plot( PSIS_m8.3$k , WAIC_m8.3$penalty , xlab="PSIS Pareto k" ,
+ylab="WAIC penalty" , col=rangi2 , lwd=2 )
+# Add country name, not in Rcode 8.17
+text(PSIS_m8.3$k[PSIS_m8.3$k > 0.35] + 0.05,  
+     WAIC_m8.3$penalty[PSIS_m8.3$k > 0.35], 
+     labels =  as.character(dd$country[PSIS_m8.3$k > 0.35]), 
+     cex = 0.5 )
+mtext(side = 3, text = "Model m8.3")
+
+max(PSIS_m8.3$k)
+max(WAIC_m8.3$penalty)
+
+```
+  None of the countries has a Pareto K value above 0.5, so no warning is triggered.
+  
+  (b) Now use robust regression, as described in the previous chapter. Modify m8.5 to use a
+  Student-t distribution with ν = 2. Does this change the results in a substantial way?
+
+```{r}
+m8.3t <- quap(
+  alist(
+    log_gdp_std ~ dstudent( 2, mu , sigma ) ,
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+    a[cid] ~ dnorm( 1 , 0.1 ) ,
+    b[cid] ~ dnorm( 0 , 0.3 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=dd )
+
+compare(m8.3t, m8.3)
+coeftab(m8.3t, m8.3)
+
+set.seed(1)
+PSIS_m8.3t <- PSIS(m8.3t,pointwise=TRUE)
+set.seed(1)
+WAIC_m8.3t <- WAIC(m8.3t,pointwise=TRUE)
+plot( PSIS_m8.3t$k , WAIC_m8.3t$penalty , xlab="PSIS Pareto k" ,
+ylab="WAIC penalty" , col=rangi2 , lwd=2 )
+max(PSIS_m8.3t$k)
+max(WAIC_m8.3t$penalty)
+
+```
+
+The student distributed model performs much worse on predictive accuracy, but has less extreme Pareto K values, and is therefore less influenced by extreme values. Since its predictive accuracy is so much lower, there probably weren't very extreme data points in the data set.
+
+
+8H4.
+(a) Evaluate the hypothesis that language diversity,
+as measured by log(lang.per.cap), is positively associated with the average length of the growing
+season, mean.growing.season. Consider log(area) in your regression(s) as a covariate (not
+an interaction). Interpret your results. 
+
+```{r}
+# set up data structure
+data(nettle)
+d <- nettle
+d$lang.per.cap <- d$num.lang / d$k.pop
+d$log.lpc <- log(d$lang.per.cap)
+d$zgrow_season <- (d$mean.growing.season - mean(d$mean.growing.season))/sd(d$mean.growing.season)
+d$log_area <- log(d$area)   
+d$zlogarea <- (d$log_area - mean(d$log_area))/sd(d$log_area) 
+
+# define model
+H8.4a <- quap(
+  alist(
+    log.lpc ~ dnorm( mu , sigma ) ,
+    mu <- a + ba*zlogarea + bzgs*zgrow_season,
+    a ~ dnorm( 0 , 1 ) ,
+    ba ~ dnorm( 0 , 0.25 ) ,
+    bzgs ~ dnorm( 0 , 0.25 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+
+# check priors
+set.seed(1) 
+prior <- extract.prior( H8.4a )
+# set up the plot dimensions
+plot( NULL , xlim=c(0,1) , ylim=c(0,2) ,
+xlab="mean.growing.season" , ylab="log LPC" )
+abline( h=min(d$log.lpc) , lty=2 )
+abline( h=max(d$log.lpc) , lty=2 )
+# draw 50 lines from the prior
+mgs_seq <- seq( from=-0.1 , to=1.1 , length.out=30 )
+mu <- link( H8.4a , post=prior , data=data.frame(zgrow_season=mgs_seq, zlogarea = 0.5) )
+for ( i in 1:50 ) lines( mgs_seq , mu[i,] , col=col.alpha("black",0.3) )
+
+precis(H8.4a)
+
+# Plot
+plot(d$zgrow_season, d$log.lpc, xlab = "Mean growing season (z-score)",
+     ylab = "Log proportional language diversity", xlim = c(-2.5, 2.5))
+
+# Add line for zsd_grow_season = zsd
+mu <- link(H8.4a, n = 1e4, data = list(zgrow_season = seq(-3, 3, 0.1), 
+                           zlogarea = mean(d$zlogarea)))
+lines(seq(-3, 3, 0.1), apply(mu, 2, mean), lty = 2, col = "black")
+shade(apply(mu, 2, HPDI, prob = 0.95), seq(-3, 3, 0.1))
+```
+Mean growing season seems to be positively associated with language diversity, also when controlling for area
+
+(b) Now evaluate the hypothesis that language diversity is
+negatively associated with the standard deviation of length of growing season, sd.growing.season.
+This hypothesis follows from uncertainty in harvest favoring social insurance through larger social
+networks and therefore fewer languages. Again, consider log(area) as a covariate (not an interaction).
+Interpret your results. 
+
+```{r}
+d$zsdGS <- (d$sd.growing.season - mean(d$sd.growing.season))/sd(d$sd.growing.season)
+
+# define model
+H8.4b <- quap(
+  alist(
+    log.lpc ~ dnorm( mu , sigma ) ,
+    mu <- a + ba*zlogarea + bzsdGS*zsdGS,
+    a ~ dnorm( 0 , 1 ) ,
+    ba ~ dnorm( 0 , 0.25 ) ,
+    bzsdGS ~ dnorm( 0 , 0.25 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+
+
+precis(H8.4b)
+
+# Plot
+plot(d$zsdGS, d$log.lpc, xlab = "SD growing season (z-score)",
+     ylab = "Log proportional language diversity", xlim = c(-2.5, 2.5))
+
+# Add line for zsd_grow_season = zsd
+mu <- link(H8.4b, n = 1e4, data = list(zsdGS = seq(-3, 3, 0.1), 
+                           zlogarea = mean(d$zlogarea)))
+lines(seq(-3, 3, 0.1), apply(mu, 2, mean), lty = 2, col = "black")
+shade(apply(mu, 2, HPDI, prob = 0.95), seq(-3, 3, 0.1))
+```
+SD growing season seems to be negatively associated with language diversity, also when controlling for area
+
+(c) Finally, evaluate the hypothesis that mean.growing.season and
+sd.growing.season interact to synergistically reduce language diversity. The idea is that, in nations
+with longer average growing seasons, high variance makes storage and redistribution even more important
+than it would be otherwise. That way, people can cooperate to preserve and protect windfalls
+to be used during the droughts.
+
+```{r}
+# define model
+H8.4c <- quap(
+  alist(
+    log.lpc ~ dnorm( mu , sigma ) ,
+    mu <- a + ba*zlogarea + bzgs*zgrow_season + bzsdGS*zsdGS + bMS*zgrow_season*zsdGS,
+    a ~ dnorm( 0 , 1 ) ,
+    ba ~ dnorm( 0 , 0.25 ) ,
+    bzgs ~ dnorm( 0 , 0.25 ) ,
+    bzsdGS ~ dnorm( 0 , 0.25 ) ,
+    bMS ~ dnorm( 0 , 0.25 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+
+
+precis(H8.4c)
+
+# Plot
+plot(d$zgrow_season, d$log.lpc, xlab = "Mean growing season (z-score)",
+     ylab = "Log proportional language diversity", xlim = c(-2.5, 2.5))
+
+# Add line for zsd_grow_season = zsd
+mu <- link(H8.4c, n = 1e4, data = list(zgrow_season = seq(-3, 3, 0.1), zsdGS = mean(d$zsdGS),
+                           zlogarea = mean(d$zlogarea)))
+lines(seq(-3, 3, 0.1), apply(mu, 2, mean), lty = 2, col = "black")
+shade(apply(mu, 2, HPDI, prob = 0.95), seq(-3, 3, 0.1))
+
+# Plot
+plot(d$zsdGS, d$log.lpc, xlab = "SD growing season (z-score)",
+     ylab = "Log proportional language diversity", xlim = c(-2.5, 2.5))
+
+# Add line for zsd_grow_season = zsd
+mu <- link(H8.4c, n = 1e4, data = list(zsdGS = seq(-3, 3, 0.1), zgrow_season = mean(d$zgrow_season),
+                           zlogarea = mean(d$zlogarea)))
+lines(seq(-3, 3, 0.1), apply(mu, 2, mean), lty = 2, col = "black")
+shade(apply(mu, 2, HPDI, prob = 0.95), seq(-3, 3, 0.1))
+
+
+
+set.seed(123)
+
+triptych <- function(zsd = -1) {
+  plot(d$zgrow_season, d$log.lpc, xlab = "Mean growing season (z-score)",
+     ylab = "Log proportional language diversity", xlim = c(-2.5, 2.5), pch = "")
+
+  
+  mu <- link(H8.4c, n = 1e4, data = list(zgrow_season = seq(-3, 3, 0.1), 
+                           zsdGS = zsd, zlogarea = mean(d$zlogarea)))
+  lines(seq(-3, 3, 0.1), apply(mu, 2, mean), lty = 2, col = "black")
+  shade(apply(mu, 2, HPDI, prob = 0.95), seq(-3, 3, 0.1))
+  mtext(side = 3, text = sprintf("SD growing season = %0.f", zsd), cex = 0.7)
+}
+
+par(mfrow = c(1, 3))
+triptych(zsd = -1)
+triptych(zsd = 0)
+triptych(zsd = 1)
+
+```
+
+8H5. Consider the data(Wines2012) data table. These data are expert ratings of 20 different French
+and American wines by 9 different French and American judges. Your goal is to model score, the
+subjective rating assigned by each judge to each wine. I recommend standardizing it. In this problem,
+consider only variation among judges and wines. Construct index variables of judge and wine and
+then use these index variables to construct a linear regression model. Justify your priors. You should
+end up with 9 judge parameters and 20 wine parameters. 
+
+
+```{r}
+library(rethinking)
+data(Wines2012)
+d <- Wines2012
+
+d$std_score <- (d$score-mean(d$score))/sd(d$score)
+d$iJudge <- as.integer(d$judge)
+d$iWine <- as.integer(d$wine)
+
+H8.5 <- quap(
+  alist(
+    std_score ~ dnorm( mu , sigma ) ,
+    mu <- a[iJudge] + b[iWine] ,
+    a[iJudge] ~ dnorm( 0 , 1 ) ,
+    b[iWine] ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+
+precis(H8.5, depth = 2, prob = 0.95)
+
+# Compare coefficients a above with mean value for judges:
+judges = aggregate(list(meanscore = d$std_score), list(iJudge = d$iJudge), mean)
+# Compare coefficients a above with mean value for wine:
+wines = aggregate(list(meanscore = d$std_score), list(iWine = d$iWine), mean)
+
+range(judges$meanscore)
+range(wines$meanscore)
+```
+
+- How do you interpret the variation among individual judges and individual wines? 
+There is about equal variation in the meanscore based on the judges, and based on the wines
+
+- Do you notice any patterns, just by plotting the differences?
+There seems to be more agreement about a very bad wine than a very good wine
+
+- Which judges gave the highest/lowest ratings? 
+Judges 5 & 6 gave the highest ratings, judges 8 & 4 gave the lowest ratings.
+
+- Which wines were rated worst/best on average?
+Wines 4 & 20 got the highest ratings, wines 18 & 6 got the lowest ratings.
+
+
+
+8H6. Now consider three features of the wines and judges:
+  (1) flight: Whether the wine is red or white.
+  (2) wine.amer: Indicator variable for American wines.
+  (3) judge.amer: Indicator variable for American judges.
+Use indicator or index variables to model the influence of these features on the scores. Omit the
+individual judge and wine index variables from Problem 1. Do not include interaction effects yet.
+Again justify your priors.
+- What do you conclude about the differences among the wines and judges?
+Try to relate the results to the inferences in the previous problem.
+
+```{r}
+d$iFlight <- as.integer(d$flight)
+d$iWA <- d$wine.amer+1 
+d$iJA <- d$judge.amer+1 
+
+H8.6 <- quap(
+  alist(
+    std_score ~ dnorm( mu , sigma ) ,
+    mu <- a[iFlight] + b[iWA] + c[iJA],
+    a[iFlight] ~ dnorm( 0 , 1 ) ,
+    b[iJA] ~ dnorm( 0 , 0.5 ) ,
+    c[iWA] ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+
+precis(H8.6, depth = 2, prob = 0.95)
+```
+
+No difference between red & white wines.
+American wines slightly worse ratings than french.
+American judges gave slightly higher ratings than french judges.
+There is a lot of uncertainty though with large variations.
+
+
+8H7. Now consider two-way interactions among the three features. You should end up with three
+different interaction terms in your model. These will be easier to build, if you use indicator variables.
+Again justify your priors. Explain what each interaction means. Be sure to interpret the model’s
+predictions on the outcome scale (mu, the expected score), not on the scale of individual parameters.
+You can use link to help with this, or just use your knowledge of the linear model instead. What do
+you conclude about the features and the scores? Can you relate the results of your model(s) to the
+individual judge and wine inferences from 8H5?
+
+```{r}
+d$wine.white <- d$iFlight -1
+
+H8.7 <- quap(
+  alist(
+    std_score ~ dnorm( mu , sigma ) ,
+    mu <- a + b1*wine.white + b2*wine.amer + b3*judge.amer +
+      b4*wine.white*wine.amer + b5*wine.amer*judge.amer + b6*wine.white*judge.amer,
+    c(a,b1,b2,b3,b4,b5,b6) ~ dnorm(0,1) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+
+precis(H8.7, depth = 2, prob = 0.95)
+
+
+```
+It seems like white wines are generally rated lower than red wines (b1)
+American wines are generally rated lower than french ones (b2)
+American judges generally rate wines higher than french judges (b3)
+White wines are rated more highly if they are american
+And there are no strong interactions between american wines and american judges (b5), 
+nor between white wines and american judges (b6)
+
+```{r}
+set.seed(123)
+
+quadtych <- function(judge = 0, white = 0) {
+  plot(d$wine.amer, d$std_score, xlab = "American wine",
+     ylab = "Wine score (Z)", xlim = c(0, 1))
+
+    mu <- link(H8.7, n = 1e4, data = list(wine.amer = c(0,1), 
+                           judge.amer = judge, wine.white = white))
+  lines(c(0,1), apply(mu, 2, mean), lty = 2, col = "black")
+  shade(apply(mu, 2, HPDI, prob = 0.95), c(0,1))
+  mtext(side = 3, text = sprintf("Judge is American = %0.f, Wine is white = %0.f",judge, white), cex = 0.7)
+}
+
+par(mfrow = c(2, 2))
+quadtych(judge = 0, white = 0)
+quadtych(judge = 1, white = 0)
+quadtych(judge = 0, white = 1)
+quadtych(judge = 1, white = 1)
+
+
+
+```
+Judges 5 & 6 gave the highest ratings, judges 8 & 4 gave the lowest ratings.
+Wines 4 & 20 got the highest ratings, wines 18 & 6 got the lowest ratings.
+
+High raters
+Judge 5: American
+Judge 6: American
+Low raters
+Judge 8: American
+Judge 4: French
+
+Good wine
+Wine 4: Red & French
+Wine 20: Red & French
+Bad wine
+Wine 18: Red & American
+Wine 6: Red & American
+
+Red wines fall more on both sides of the extreme, but the French fall more on the positive, and the American more on the negative.
+So the French tend to make better red wines, but there is no big difference between the quality in white wines.

@@ -1,0 +1,575 @@
+Exercises Chapter 6
+
+```{r}
+library(rethinking)
+N <- 100 # number of individuals 
+set.seed(909)
+height <- rnorm(N,10,2) # sim total height of each
+leg_prop <- runif(N,0.4,0.5) # leg as proportion of height
+leg_left <- leg_prop*height + # sim left leg as proportion + error
+  rnorm( N , 0 , 0.02 )
+leg_right <- leg_prop*height + # sim right leg as proportion + error
+  rnorm( N , 0 , 0.02 )
+# combine into data frame
+d <- data.frame(height,leg_left,leg_right)
+
+m6.1 <- quap(
+  alist(
+    height ~ dnorm( mu , sigma ) ,
+    mu <- a + bl*leg_left + br*leg_right ,
+    a ~ dnorm( 10 , 100 ) ,
+    bl ~ dnorm( 2 , 10 ) ,
+    br ~ dnorm( 2 , 10 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+precis(m6.1)
+plot(precis(m6.1))
+
+post <- extract.samples(m6.1)
+plot( bl ~ br , post , col=col.alpha(rangi2,0.1) , pch=16 )
+
+sum_blbr <- post$bl + post$br 
+dens( sum_blbr , col=rangi2 , lwd=2 , xlab="sum of bl and br" )
+
+```
+
+
+```{r}
+library(rethinking)
+data(milk)
+d <- milk
+d$K <- standardize( d$kcal.per.g )
+d$F <- standardize( d$perc.fat )
+d$L <- standardize( d$perc.lactose )
+
+# kcal.per.g regressed on perc.fat 
+m6.3 <- quap(
+  alist(
+    K ~ dnorm( mu , sigma ) ,
+    mu <- a + bF*F ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bF ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+
+# kcal.per.g regressed on perc.lactose
+m6.4 <- quap(
+  alist(
+    K ~ dnorm( mu , sigma ) ,
+    mu <- a + bL*L ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bL ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+
+precis( m6.3 )
+precis( m6.4 )
+
+m6.5 <- quap( 
+  alist(
+    K ~ dnorm( mu , sigma ) ,
+    mu <- a + bF*F + bL*L ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bF ~ dnorm( 0 , 0.5 ) ,
+    bL ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=d )
+precis( m6.5 )
+
+pairs( ~ kcal.per.g + perc.fat + perc.lactose , data=d , col=rangi2 )
+
+```
+
+```{r}
+sim.coll <- function( r=0.9 ) {
+d$x <- rnorm( nrow(d) , mean=r*d$perc.fat ,
+sd=sqrt( (1-r^2)*var(d$perc.fat) ) )
+m <- lm( kcal.per.g ~ perc.fat + x , data=d )
+sqrt( diag( vcov(m) ) )[2] # stddev of parameter
+}
+rep.sim.coll <- function( r=0.9 , n=100 ) {
+stddev <- replicate( n , sim.coll(r) )
+mean(stddev)
+}
+r.seq <- seq(from=0,to=0.99,by=0.01)
+stddev <- sapply( r.seq , function(z) rep.sim.coll(r=z,n=100) )
+plot( stddev ~ r.seq , type="l" , col=rangi2, lwd=2 , xlab="correlation" )
+```
+
+
+```{r}
+set.seed(71) 
+# number of plants
+N <- 100
+# simulate initial heights
+h0 <- rnorm(N,10,2)
+
+# assign treatments and simulate fungus and growth
+treatment <- rep( 0:1 , each=N/2 )
+fungus <- rbinom( N , size=1 , prob=0.5 - treatment*0.4 )
+h1 <- h0 + rnorm(N, 5 - 3*fungus)
+
+# compose a clean data frame
+d <- data.frame( h0=h0 , h1=h1 , treatment=treatment , fungus=fungus )
+precis(d)
+
+sim_p <- rlnorm( 1e4 , 0 , 0.25 )
+precis( data.frame(sim_p) )
+
+m6.6 <- quap(
+  alist(
+    h1 ~ dnorm( mu , sigma ),
+    mu <- h0*p,
+    p ~ dlnorm( 0 , 0.25 ),
+    sigma ~ dexp( 1 )
+  ), data=d )
+precis(m6.6)
+
+m6.7 <- quap( 
+  alist(
+    h1 ~ dnorm( mu , sigma ),
+    mu <- h0 * p,
+    p <- a + bt*treatment + bf*fungus,
+    a ~ dlnorm( 0 , 0.2 ) ,
+    bt ~ dnorm( 0 , 0.5 ),
+    bf ~ dnorm( 0 , 0.5 ),
+    sigma ~ dexp( 1 )
+  ), data=d )
+precis(m6.7)
+
+```
+
+
+```{r}
+library(dagitty)
+plant_dag <- dagitty( "dag {
+H_0 -> H_1
+F -> H_1
+T -> F
+}")
+coordinates( plant_dag ) <- list( x=c(H_0=0,T=2,F=1.5,H_1=1) ,
+y=c(H_0=0,T=0,F=0,H_1=0) )
+drawdag( plant_dag )
+
+
+d <- sim_happiness( seed=1977 , N_years=1000 )
+precis(d)
+
+d2 <- d[ d$age>17 , ] # only adults
+d2$A <- ( d2$age - 18 ) / ( 65 - 18 )
+
+d2$mid <- d2$married + 1
+m6.9 <- quap(
+  alist(
+    happiness ~ dnorm( mu , sigma ),
+    mu <- a[mid] + bA*A,
+    a[mid] ~ dnorm( 0 , 1 ),
+    bA ~ dnorm( 0 , 2 ),
+    sigma ~ dexp(1)
+  ) , data=d2 )
+precis(m6.9,depth=2)
+
+```
+
+```{r}
+N <- 200 # number of grandparent-parent-child triads
+b_GP <- 1 # direct effect of G on P
+b_GC <- 0 # direct effect of G on C
+b_PC <- 1 # direct effect of P on C
+b_U <- 2 # direct effect of U on P and C
+
+set.seed(1)
+U <- 2*rbern( N , 0.5 ) - 1
+G <- rnorm( N )
+P <- rnorm( N , b_GP*G + b_U*U )
+C <- rnorm( N , b_PC*P + b_GC*G + b_U*U )
+d <- data.frame( C=C , P=P , G=G , U=U )
+
+m6.11 <- quap( 
+  alist(
+    C ~ dnorm( mu , sigma ),
+    mu <- a + b_PC*P + b_GC*G,
+    a ~ dnorm( 0 , 1 ),
+    c(b_PC,b_GC) ~ dnorm( 0 , 1 ),
+    sigma ~ dexp( 1 )
+  ), data=d )
+precis(m6.11)
+
+m6.12 <- quap(
+  alist(
+    C ~ dnorm( mu , sigma ),
+    mu <- a + b_PC*P + b_GC*G + b_U*U,
+    a ~ dnorm( 0 , 1 ),
+    c(b_PC,b_GC,b_U) ~ dnorm( 0 , 1 ),
+    sigma ~ dexp( 1 )
+  ), data=d )
+precis(m6.12)
+
+```
+
+```{r}
+library(dagitty)
+dag_6.1 <- dagitty( "dag {
+U [unobserved]
+X -> Y
+X <- U <- A -> C -> Y
+U -> B <- C
+}")
+adjustmentSets( dag_6.1 , exposure="X" , outcome="Y" )
+
+
+dag_6.2 <- dagitty( "dag {
+A -> D
+A -> M -> D
+A <- S -> M
+S -> W -> D
+}")
+adjustmentSets( dag_6.2 , exposure="W" , outcome="D" )
+
+impliedConditionalIndependencies( dag_6.2 )
+
+```
+
+
+############################## Exercises ############################## 
+### Easy
+
+6E1. List three mechanisms by which multiple regression can produce false inferences about causal
+effects.
+
+- Multicollinearity
+- Post-treatment bias
+- Collider bias
+
+6E2. For one of the mechanisms in the previous problem, provide an example of your choice, perhaps
+from your own research.
+
+We measure performance for a certain task. In addition we measure, pupil size, EEG, heart rate, and breathing phase & route. There are probably unobserved variables that influence performance as well (fatigue, motivation, skill). These unknown variables could form collider bias. If for example mouth breathing negatively affects performance, then high performance during mouth breathing might indicate favorable conditions for the unobserved variables.
+
+
+6E3. List the four elemental confounds. Can you explain the conditional dependencies of each?
+- Fork:        c <- A -> B    C ⊥⊥ B|A
+- Pipe:        A -> B -> C    C ⊥⊥ B|A
+- Collider:    C -> A <- B    C ⊥̸⊥ B|A
+- Descendent:  C -> A <- B; A -> D conditioning on the Descendent D is like conditioning on its parent A.
+
+
+6E4. How is a biased sample like conditioning on a collider? Think of the example at the open of the
+chapter.
+
+
+If a sample is biased by some constraints (as published research is a sample of all research), knowing information about some of the constraints (the research is trustworthy), gives us information about other constraints (it is therefore less likely that the research is newsworthy as well).
+
+
+### Medium
+6M1. Modify the DAG on page 186 to include the variable V, an unobserved cause of C and Y:
+C ← V → Y. Reanalyze the DAG. How many paths connect X to Y? Which must be closed? Which
+variables should you condition on now?
+
+
+```{r}
+dag_M6.1 <- dagitty( "dag {
+U [unobserved]
+V [unobserved]
+X -> Y
+X <- U <- A -> C -> Y
+U -> B <- C
+C <- V -> Y
+}")
+adjustmentSets( dag_M6.1 , exposure="X" , outcome="Y" )
+```
+There are 4 backdoor paths now:
+(1) X ← U ← A → C → Y
+(2) X ← U → B ← C → Y
+(3) X ← U ← A → C → V → Y
+(4) X ← U → B ← C → V → Y
+
+Conditioning on A will suffice. 
+
+6M2. Sometimes, in order to avoid multicollinearity, people inspect pairwise correlations among
+predictors before including them in a model. This is a bad procedure, because what matters is the
+conditional association, not the association before the variables are included in the model. To highlight
+this, consider the DAG X → Z → Y. Simulate data from this DAG so that the correlation
+between X and Z is very large. Then include both in a model prediction Y. Do you observe any
+multicollinearity? Why or why not? What is different from the legs example in the chapter?
+
+
+```{r}
+library(rethinking)
+N <- 100 # number of individuals 
+set.seed(1)
+xz <- 0.7 
+zy <- 0.4 
+X <- rnorm(N,0,1) 
+Z <- rnorm(N,0,1) + xz*X
+Y <- rnorm(N,0,1) + zy*Z
+# combine into data frame
+d <- data.frame(X,Z,Y)
+
+round(cor(d), 5)
+
+M6.2 <- quap(
+  alist(
+    Y ~ dnorm( mu , sigma ) ,
+    mu <- b0 + bx*X + bz*Z ,
+    c(b0, bx, bz) ~ dnorm(0, 1),
+    sigma ~ dexp( 1 )
+  ) , data=d )
+
+round(precis(M6.2, prob = 0.95), 2)
+```
+
+
+6M3. Learning to analyze DAGs requires practice. For each of the four DAGs below, state which
+variables, if any, you must adjust for (condition on) to estimate the total causal influence of X on Y.
+
+TL: condition on Z, it is a confounder
+TR: Don't need to adjust any variable
+BL: Don't need to adjust any variable
+BR: condition on A, it is a confounder
+
+
+### Hard
+
+All three problems below are based on the same data. The data in data(foxes) are 116 foxes from
+30 different urban groups in England. These foxes are like street gangs. Group size varies from 2 to
+8 individuals. Each group maintains its own urban territory. Some territories are larger than others.
+The area variable encodes this information. Some territories also have more avgfood than others.
+We want to model the weight of each fox. For the problems below, assume the following DAG:
+
+```{r}
+fox_dag <- dagitty( "dag {
+area -> avgfood
+weight <- avgfood -> groupsize
+groupsize -> weight
+}")
+
+coordinates( fox_dag ) <- list( x=c(area=1,avgfood=0,weight=1,groupsize=2) ,
+y=c(area=0,avgfood=1,groupsize=1,weight=2) )
+drawdag( fox_dag )
+```
+
+
+6H3. Use a model to infer the total causal influence of area on weight. Would increasing the area
+available to each fox make it heavier (healthier)? You might want to standardize the variables. Regardless,
+use prior predictive simulation to show that your model’s prior predictions stay within the
+possible outcome range.
+
+```{r}
+#load data & standardize
+data(foxes)
+d <- foxes
+d$A <- standardize( d$area )
+d$F <- standardize( d$avgfood )
+d$S <- standardize( d$groupsize )
+d$W <- standardize( d$weight )
+
+H6.3 <- quap(
+  alist(
+    ## F -> W <- S 
+    W ~ dnorm( mu , sigma ) ,
+    mu <- a + bF*F + bS*S ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bF ~ dnorm( 0 , 0.5 ) ,
+    bS ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 ),
+    ## F -> S
+    S ~ dnorm( mu_S, sigma_S),
+    mu_S <- as + bSF*F ,
+    as ~ dnorm( 0 , 0.2 ) ,
+    bSF ~ dnorm( 0 , 0.5 ) ,
+    sigma_S ~ dexp( 1 ),
+    ## A -> F
+    F ~ dnorm( mu_F, sigma_F),
+    mu_F <- af + bFA*A ,
+    af ~ dnorm( 0 , 0.2 ) ,
+    bFA ~ dnorm( 0 , 0.5 ) ,
+    sigma_F ~ dexp( 1 )
+  ) , data=d )
+precis(H6.3)
+plot(precis(H6.3))
+
+# Plotting priors
+prior <- extract.prior( H6.3 )
+xseq <- c(-2,2)
+mu <- link( H6.3 , post=prior , data=list(A=xseq, S=xseq, F=xseq) )
+plot( NULL , xlim=xseq , ylim=xseq )
+for ( i in 1:50 ) lines( xseq , mu[[3]][i,] , col=col.alpha("black",0.3) )
+
+# Plotting area vs weight
+Aseq <- seq( from=min(d$A)-0.15 , to=max(d$A)+0.15 , length.out=30 )
+Fseq <- seq( from=min(d$F)-0.15 , to=max(d$F)+0.15 , length.out=30 )
+Sseq <- seq( from=min(d$S)-0.15 , to=max(d$S)+0.15 , length.out=30 )
+mu <- link( H6.3 , data=list(A=Aseq, F=Fseq, S=Sseq) )
+mu_mean <- apply(mu[[3]],2,mean)
+mu_PI <- apply(mu[[3]],2,PI)
+plot( W ~ A , data=d )
+lines( Aseq , mu_mean , lwd=2 )
+shade( mu_PI , Aseq )
+
+# Overall Area seems to have a relatively neutral effect on weight. It has a strong positive effect on food, which in turn has a strong positive effect on weight, but food also has a strong positive effect on size, and size has a strong negative effect on weight.
+```
+
+
+6H4. Now infer the causal impact of adding food to a territory. Would this make foxes heavier?
+Which covariates do you need to adjust for to estimate the total causal influence of food?
+
+```{r}
+# Adjust for area size
+Fseq <- seq( from=min(d$F)-0.15 , to=max(d$F)+0.15 , length.out=30 )
+Sseq <- seq( from=min(d$S)-0.15 , to=max(d$S)+0.15 , length.out=30 )
+mu <- link( H6.3 , data=list(A=rep(0, 30), F=Fseq, S=Sseq) )
+mu_mean <- apply(mu[[3]],2,mean)
+mu_PI <- apply(mu[[3]],2,PI)
+plot( W ~ F , data=d )
+lines( Fseq , mu_mean , lwd=2 )
+shade( mu_PI , Fseq )
+```
+
+6H5. Now infer the causal impact of group size. Which covariates do you need to adjust for? Looking
+at the posterior distribution of the resulting model, what do you think explains these data? That is,
+can you explain the estimates for all three problems? How do they go together?
+
+```{r}
+# Adjust for area size and avgfood
+Sseq <- seq( from=min(d$S)-0.15 , to=max(d$S)+0.15 , length.out=30 )
+mu <- link( H6.3 , data=list(A=rep(0, 30), F=rep(0, 30), S=Sseq) )
+mu_mean <- apply(mu[[3]],2,mean)
+mu_PI <- apply(mu[[3]],2,PI)
+plot( W ~ S , data=d )
+lines( Sseq , mu_mean , lwd=2 )
+shade( mu_PI , Sseq )
+
+# Bigger Area  leads to more food, which in turn leads to heavier foxes, but more food also leads to larger pack sizes, and pack size has a strong negative effect on weight.
+```
+
+
+
+MN3: This is a DAG with five variables: X (exposure), Y (outcome), Z1 (measured covariate), Z2 (measured covariate), U (unmeasured variable).
+
+```{r}
+mats_dag <- dagitty( "dag {
+U [unobserved]
+Z1 <- U -> Y
+Z2 -> X -> Z1 -> Y
+Z2 -> Y
+X -> Y
+}")
+
+coordinates( mats_dag ) <- list( x=c(X=0,Z1=1,Z2=1,Y=2,U=2) ,
+y=c(U=0,Z1=1,X=2,Y=2,Z2=3) )
+drawdag( mats_dag )
+```
+
+(a) Simulate data consistent with this DAG. Assume that all variables (nodes) are continuous and normally distributed and that all relationships (arrows) are linear. Specify the total causal effect and the direct causal effect of X on Y in your simulated scenario.
+
+```{r}
+set.seed(999)
+n <- 1e4  # Number of observations
+
+# Causal effects (here modelled as linear regression coefficients), 
+# as many as graph edges
+UZ1 <- 0.4
+UY  <- -0.5
+Z1Y <- 0.7
+XZ1 <- 0.5
+XY  <- 0.3
+Z2X <- -0.6
+Z2Y <- 0.2
+
+# Exogenous variables (as many as nodes without arrows pointing in to them)
+Z2 <- rnorm(n)
+U  <- rnorm(n)
+
+# Endogenous variables: (as many as nodes with at least one arrow pointing in
+# to them)
+X  <- rnorm(n) + Z2X*Z2
+Z1 <- rnorm(n) + XZ1*X + UZ1*U
+Y  <- rnorm(n) + Z1Y*Z1 + Z2Y*Z2 + XY*X + UY*U
+
+
+# Put in data frame (not necessary, but makes it easy to calculate corr-matrix)
+d <- data.frame(X, Y, Z1, Z2, U)
+round(cor(d), 2)
+
+# In this simple linear model: direct-path coef + product of indirect-path coefs
+DCE <- XY
+TCE <- XY + XZ1*Z1Y
+
+
+```
+
+(b) Fit linear multiple regression models to your data to illustrate that a model with Z2 as the only covariate may give an unbiased estimate of the true total causal effect of X and Y, whereas a model with both Z1 and Z2 (or only Z1) may yield a biased estimate. Show also that including Z1 in a model will not suffice to estimate the direct causal effect of X on Y (because it is a collider on the path between X and U).
+
+```{r}
+# Crude model
+m0 <- quap(flist = alist(
+  Y ~ dnorm(mu, sigma),
+  mu <- b0 + bx*X,
+  c(b0, bx) ~ dnorm(0, 1),
+  sigma ~ dexp(1)
+), data = d)
+
+# Biased model, overadjustment bias, Z1 is a mediator
+m1 <- quap(flist = alist(
+  Y ~ dnorm(mu, sigma),
+  mu <- b0 + bx*X + b1*Z1,
+  c(b0, bx, b1) ~ dnorm(0, 1),
+  sigma ~ dexp(1)
+), data = d)
+
+ 
+# Unbiased model, adjusting for confounder Z2 
+m2 <- quap(flist = alist(
+  Y ~ dnorm(mu, sigma),
+  mu <- b0 + bx*X + b2*Z2,
+  c(b0, bx, b2) ~ dnorm(0, 1),
+  sigma ~ dexp(1)
+), data = d)
+
+
+# Biased model, all covariates included
+m3 <- quap(flist = alist(
+  Y ~ dnorm(mu, sigma),
+  mu <- b0 + bx*X + b1*Z1 + b2*Z2,
+  c(b0, bx, b1, b2) ~ dnorm(0, 1),
+  sigma ~ dexp(1)
+), data = d)
+
+coeftab(m0, m1, m2, m3)
+
+plot(coeftab(m0, m1, m2, m3))
+abline(v = TCE, col = "blue", lty = 2)
+
+#m2, the unbiased model has the best aproximation of TCE (bx)
+
+compare(m0, m1, m2, m3)
+```
+
+
+(c) Use cross-validation (SR: p. 217-) to compare the out-of-sample predictive performance of two models: one with Z2 as the only covariate, and the second with both Z1 and Z2 as covariates. Which model is best in terms of out-of-sample prediction?
+
+```{r}
+# Unbiased model, adjusting for confounder Z2 
+m2 <- quap(flist = alist(
+  Y ~ dnorm(mu, sigma),
+  mu <- b0 + bx*X + b2*Z2,
+  c(b0, bx, b2) ~ dnorm(0, 1),
+  sigma ~ dexp(1)
+), data = d)
+
+
+# Biased model, all covariates included
+m3 <- quap(flist = alist(
+  Y ~ dnorm(mu, sigma),
+  mu <- b0 + bx*X + b1*Z1 + b2*Z2,
+  c(b0, bx, b1, b2) ~ dnorm(0, 1),
+  sigma ~ dexp(1)
+), data = d)
+
+compare(m2,m3, func = WAIC )
+
+```
+
+
+

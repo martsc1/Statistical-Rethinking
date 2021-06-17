@@ -1,0 +1,576 @@
+Exercises chapter 5
+
+```{r}
+# load data and copy 
+library(rethinking)
+data(WaffleDivorce)
+d <- WaffleDivorce
+# standardize variables
+d$D <- standardize( d$Divorce )
+d$M <- standardize( d$Marriage )
+d$A <- standardize( d$MedianAgeMarriage )
+
+m5.1 <- quap(
+  alist(
+    D     ~ dnorm( mu , sigma ) ,
+    mu    <- a + bA * A ,
+    a     ~ dnorm( 0 , 0.2 ) ,
+    bA    ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data = d )
+
+set.seed(10)
+prior <- extract.prior( m5.1 )
+mu <- link( m5.1 , post=prior , data=list( A=c(-2,2) ) )
+plot( NULL , xlim=c(-2,2) , ylim=c(-2,2) )
+for ( i in 1:50 ) lines( c(-2,2) , mu[i,] , col=col.alpha("black",0.4) )
+
+# compute percentile interval of mean 
+A_seq <- seq( from=-3 , to=3.2 , length.out=30 )
+mu <- link( m5.1 , data=list(A=A_seq) )
+mu.mean <- apply( mu , 2, mean )
+mu.PI <- apply( mu , 2 , PI )
+# plot it all
+plot( D ~ A , data=d , col=rangi2 )
+lines( A_seq , mu.mean , lwd=2 )
+shade( mu.PI , A_seq )
+
+
+m5.2 <- quap( 
+  alist(
+    D ~ dnorm( mu , sigma ) ,
+    mu <- a + bM * M ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bM ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data = d )
+
+library(dagitty) 
+dag5.1 <- dagitty( "dag{ A -> D; A -> M; M -> D }" )
+coordinates(dag5.1) <- list( x=c(A=0,D=1,M=2) , y=c(A=0,D=1,M=0) )
+drawdag( dag5.1 )
+
+DMA_dag2 <- dagitty('dag{ D <- A -> M }') 
+impliedConditionalIndependencies( DMA_dag2 )
+
+
+m5.3 <- quap( 
+  alist(
+    D ~ dnorm( mu , sigma ) ,
+    mu <- a + bM*M + bA*A ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bM ~ dnorm( 0 , 0.5 ) ,
+    bA ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data = d )
+precis( m5.3 )
+
+plot( coeftab(m5.1,m5.2,m5.3), par=c("bA","bM") )
+
+
+m5.4 <- quap( 
+  alist(
+    M ~ dnorm( mu , sigma ) ,
+    mu <- a + bAM * A ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bAM ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data = d )
+
+mu <- link(m5.4)
+mu_mean <- apply( mu , 2 , mean )
+mu_resid <- d$M - mu_mean
+
+
+# call link without specifying new data
+# so it uses original data
+mu <- link( m5.3 )
+# summarize samples across cases
+mu_mean <- apply( mu , 2 , mean )
+mu_PI <- apply( mu , 2 , PI )
+# simulate observations
+# again no new data, so uses original data
+D_sim <- sim( m5.3 , n=1e4 )
+D_PI <- apply( D_sim , 2 , PI )
+
+plot( mu_mean ~ d$D , col=rangi2 , ylim=range(mu_PI) , 
+xlab="Observed divorce" , ylab="Predicted divorce" )
+abline( a=0 , b=1 , lty=2 )
+for ( i in 1:nrow(d) ) lines( rep(d$D[i],2) , mu_PI[,i] , col=rangi2 )
+identify( x=d$D , y=mu_mean , labels=d$Loc )
+
+
+```
+
+```{r}
+data(WaffleDivorce) 
+d <- list()
+d$A <- standardize( WaffleDivorce$MedianAgeMarriage )
+d$D <- standardize( WaffleDivorce$Divorce )
+d$M <- standardize( WaffleDivorce$Marriage )
+
+m5.3_A <- quap(
+  alist(
+  ## A -> D <- M
+    D ~ dnorm( mu , sigma ) ,
+    mu <- a + bM*M + bA*A ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bM ~ dnorm( 0 , 0.5 ) ,
+    bA ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 ),
+  ## A -> M
+    M ~ dnorm( mu_M , sigma_M ),
+    mu_M <- aM + bAM*A,
+    aM ~ dnorm( 0 , 0.2 ),
+    bAM ~ dnorm( 0 , 0.5 ),
+    sigma_M ~ dexp( 1 )
+  ) , data = d )
+
+A_seq <- seq( from=-2 , to=2 , length.out=30 )
+# prep data 
+sim_dat <- data.frame( A=A_seq )
+# simulate M and then D, using A_seq
+s <- sim( m5.3_A , data=sim_dat , vars=c("M","D") )
+
+plot( sim_dat$A , colMeans(s$D) , ylim=c(-2,2) , type="l" ,
+xlab="manipulated A" , ylab="counterfactual D" )
+shade( apply(s$D,2,PI) , sim_dat$A )
+mtext( "Total counterfactual effect of A on D" )
+
+# new data frame, standardized to mean 26.1 and std dev 1.24
+sim2_dat <- data.frame( A=(c(20,30)-26.1)/1.24 )
+s2 <- sim( m5.3_A , data=sim2_dat , vars=c("M","D") )
+mean( s2$D[,2] - s2$D[,1] )
+
+
+sim_dat <- data.frame( M=seq(from=-2,to=2,length.out=30) , A=0 ) 
+s <- sim( m5.3_A , data=sim_dat , vars="D" )
+plot( sim_dat$M , colMeans(s) , ylim=c(-2,2) , type="l" ,
+xlab="manipulated M" , ylab="counterfactual D" )
+shade( apply(s,2,PI) , sim_dat$M )
+mtext( "Total counterfactual effect of M on D" )
+
+```
+
+
+
+
+```{r}
+data(milk)
+d <- milk
+str(d)
+
+d$K <- standardize( d$kcal.per.g ) 
+d$N <- standardize( d$neocortex.perc )
+d$M <- standardize( log(d$mass) )
+
+dcc <- d[ complete.cases(d$K,d$N,d$M) , ]
+
+m5.5_draft <- quap( 
+  alist(
+    K ~ dnorm( mu , sigma ) ,
+    mu <- a + bN*N ,
+    a ~ dnorm( 0 , 1 ) ,
+    bN ~ dnorm( 0 , 1 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=dcc )
+
+prior <- extract.prior( m5.5_draft )
+xseq <- c(-2,2)
+mu <- link( m5.5_draft , post=prior , data=list(N=xseq) )
+plot( NULL , xlim=xseq , ylim=xseq )
+for ( i in 1:50 ) lines( xseq , mu[i,] , col=col.alpha("black",0.3) )
+
+m5.5 <- quap( 
+  alist(
+    K ~ dnorm( mu , sigma ) ,
+    mu <- a + bN*N ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bN ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=dcc )
+
+precis( m5.5 )
+
+xseq <- seq( from=min(dcc$N)-0.15 , to=max(dcc$N)+0.15 , length.out=30 )
+mu <- link( m5.5 , data=list(N=xseq) )
+mu_mean <- apply(mu,2,mean)
+mu_PI <- apply(mu,2,PI)
+plot( K ~ N , data=dcc )
+lines( xseq , mu_mean , lwd=2 )
+shade( mu_PI , xseq )
+
+
+m5.6 <- quap(
+  alist(
+    K ~ dnorm( mu , sigma ) ,
+    mu <- a + bM*M ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bM ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+    ) , data=dcc )
+  precis(m5.6)
+
+xseq <- seq( from=min(dcc$M)-0.15 , to=max(dcc$M)+0.15 , length.out=30 )
+mu <- link( m5.6 , data=list(M=xseq) )
+mu_mean <- apply(mu,2,mean)
+mu_PI <- apply(mu,2,PI)
+plot( K ~ M , data=dcc )
+lines( xseq , mu_mean , lwd=2 )
+shade( mu_PI , xseq )
+
+
+m5.7 <- quap(
+  alist(
+    K ~ dnorm( mu , sigma ) ,
+    mu <- a + bN*N + bM*M ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bN ~ dnorm( 0 , 0.5 ) ,
+    bM ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data=dcc )
+precis(m5.7)
+
+plot( coeftab( m5.5 , m5.6 , m5.7 ) , pars=c("bM","bN") )
+
+
+xseq <- seq( from=min(dcc$M)-0.15 , to=max(dcc$M)+0.15 , length.out=30 )
+mu <- link( m5.7 , data=data.frame( M=xseq , N=0 ) )
+mu_mean <- apply(mu,2,mean)
+mu_PI <- apply(mu,2,PI)
+plot( NULL , xlim=range(dcc$M) , ylim=range(dcc$K) )
+lines( xseq , mu_mean , lwd=2 )
+shade( mu_PI , xseq )
+
+xseq <- seq( from=min(dcc$N)-0.15 , to=max(dcc$N)+0.15 , length.out=30 )
+mu <- link( m5.7 , data=data.frame( N=xseq , M=0 ) )
+mu_mean <- apply(mu,2,mean)
+mu_PI <- apply(mu,2,PI)
+plot( NULL , xlim=range(dcc$N) , ylim=range(dcc$K) )
+lines( xseq , mu_mean , lwd=2 )
+shade( mu_PI , xseq )
+
+```
+
+
+```{r}
+data(Howell1)
+d <- Howell1
+str(d)
+
+d$sex <- ifelse( d$male==1 , 2 , 1 ) 
+str( d$sex )
+
+m5.8 <- quap( 
+  alist(
+    height ~ dnorm( mu , sigma ) ,
+    mu <- a[sex] ,
+    a[sex] ~ dnorm( 178 , 20 ) ,
+    sigma ~ dunif( 0 , 50 )
+  ) , data=d )
+precis( m5.8 , depth=2 )
+
+post <- extract.samples(m5.8)
+post$diff_fm <- post$a[,1] - post$a[,2]
+precis( post , depth=2 )
+
+```
+
+
+```{r}
+data(milk)
+d <- milk
+levels(d$clade)
+
+d$clade_id <- as.integer( d$clade )
+
+d$K <- standardize( d$kcal.per.g ) 
+m5.9 <- quap(
+  alist(
+    K ~ dnorm( mu , sigma ),
+    mu <- a[clade_id],
+    a[clade_id] ~ dnorm( 0 , 0.5 ),
+    sigma ~ dexp( 1 )
+  ) , data=d )
+labels <- paste( "a[" , 1:4 , "]:" , levels(d$clade) , sep="" )
+plot( precis( m5.9 , depth=2 , pars="a" ) , labels=labels ,
+xlab="expected kcal (std)" )
+
+```
+
+
+##################### Exercises #############################
+### Easy
+
+5E1. Which of the linear models below are multiple linear regressions?
+(2) $μ_{i} = β_{x}x_{i} + β_{z}z_{i}$
+(4) $μ_{i} = α + β_{x}x_{i} + β_{z}z_{i}$
+
+5E4. Suppose you have a single categorical predictor with 4 levels (unique values), labeled A, B, C
+and D. Let Ai be an indicator variable that is 1 where case i is in category A. Also suppose Bi, Ci,
+and Di for the other categories. Now which of the following linear models are inferentially equivalent
+ways to include the categorical variable in a regression? Models are inferentially equivalent when it’s
+possible to compute one posterior distribution from the posterior distribution of another model.
+
+
+### Medium
+5M1. Invent your own example of a spurious correlation. An outcome variable should be correlated
+with both predictor variables. But when both predictors are entered in the same model, the correlation
+between the outcome and one of the predictors should mostly vanish (or at least be greatly reduced).
+
+The number of people drowning
+Predicted by:
+-The amount of icecream consumption
+-The outside temperature
+
+5M2. Invent your own example of a masked relationship. An outcome variable should be correlated
+with both predictor variables, but in opposite directions. And the two predictor variables should be
+correlated with one another.
+
+The amount of people who drown every year
+predicted by: 
+- How well people can swim
+- How many bodies of water there are in the country
+
+
+5M3. It is sometimes observed that the best predictor of fire risk is the presence of firefighters—
+States and localities with many firefighters also have more fires. Presumably firefighters do not cause
+fires. Nevertheless, this is not a spurious correlation. Instead fires cause firefighters. Consider the
+same reversal of causal inference in the context of the divorce and marriage data. How might a high
+divorce rate cause a higher marriage rate? Can you think of a way to evaluate this relationship, using
+multiple regression?
+
+More divorces -> more remarriages -> higher marriage rate
+More divorces -> divorce is more normalised -> less risk associated with getting married -> more marriages
+
+Predict marriage rate by:
+- amount of divorces
+- amount of remarriage rate
+
+Predict marriage rate by:
+- amount of divorces
+- amount of stigma around divorce
+
+
+
+### Hard
+5H1. In the divorce example, suppose the DAG is: M → A → D. What are the implied conditional
+independencies of the graph? Are the data consistent with it?
+
+```{r}
+library(dagitty) 
+library(rethinking)
+dag_h1 <- dagitty('dag{ M -> A -> D }') 
+impliedConditionalIndependencies( dag_h1 )
+# D _||_ M | A  (D is independent from M given A)
+
+data(WaffleDivorce) 
+d <- WaffleDivorce
+
+# standardize variables
+d$D <- standardize( d$Divorce )
+d$M <- standardize( d$Marriage )
+d$A <- standardize( d$MedianAgeMarriage )
+
+# quadratic model with both M & A as predictors for D
+m5.3 <- quap( 
+  alist(
+    D ~ dnorm( mu , sigma ) ,
+    mu <- a + bM*M + bA*A ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bM ~ dnorm( 0 , 0.5 ) ,
+    bA ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 )
+  ) , data = d )
+
+# Make a counterfactual plot where A is known to see whether changing M has any influence on D
+xseq <- seq( from=min(d$M)-0.15 , to=max(d$M)+0.15 , length.out=30 )
+mu <- link( m5.3 , data=data.frame( M=xseq , A=0 ) )
+mu_mean <- apply(mu,2,mean)
+mu_PI <- apply(mu,2,PI)
+plot( NULL , xlim=range(d$M) , ylim=range(d$D), xlab = "Marriage rate", ylab = "Divorce rate" )
+lines( xseq , mu_mean , lwd=2 )
+shade( mu_PI , xseq )
+
+# The data seems to be consistent with the conditional independencies D _||_ M | A 
+
+```
+
+5H2. Assuming that the DAG for the divorce example is indeed M → A → D, fit a new model and
+use it to estimate the counterfactual effect of halving a State’s marriage rate M. Use the counterfactual
+example from the chapter (starting on page 140) as a template.
+
+
+```{r}
+# M → A → D quadratic model
+m5.3_A <- quap(
+  alist(
+    ## A -> D
+    D ~ dnorm( mu , sigma ) ,
+    mu <- a + bA*A ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bA ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 ),
+    ## M -> A
+    A ~ dnorm( mu_A , sigma_A ),
+    mu_A <- aA + bMA*M,
+    aA ~ dnorm( 0 , 0.2 ),
+    bMA ~ dnorm( 0 , 0.5 ),
+    sigma_A ~ dexp( 1 )
+  ) , data = d )
+
+M_seq <- seq( from=-2 , to=2 , length.out=30 )
+
+# prep data 
+sim_dat <- data.frame( M=M_seq )
+# simulate M and then D, using A_seq
+s <- sim( m5.3_A , data=sim_dat , vars=c("A","D") )
+
+plot( sim_dat$M , colMeans(s$D) , ylim=c(-2,2) , type="l" ,
+xlab="manipulated M" , ylab="counterfactual D" )
+shade( apply(s$D,2,PI) , sim_dat$M )
+mtext( "Total counterfactual effect of M on D" )
+
+# counterfactual effect of halving a State’s marriage rate M
+# new data frame, standardized to mean 20.1 and std dev 3.80
+sim2_dat <- data.frame( M=(c(d$Marriage,d$Marriage/2)-20.1)/3.80 )
+s2 <- sim( m5.3_A , data=sim2_dat , vars=c("A","D") )
+mean( s2$D[,51:100] - s2$D[,1:50] )
+# Halving a State's marriage rate would decrease the divorce rate by ~1.06 standard deviations according to the new model
+
+# Solution 2
+sim2_dat <- data.frame(M = (c(30, 15) -20.1) / 3.80)
+s2 <- sim( m5.3_A , data=sim2_dat , vars=c("A","D") )
+mean(s2$D[, 2] - s2$D[, 1])
+
+
+```
+
+
+5H3. Return to the milk energy model, m5.7. Suppose that the true causal relationship among the
+variables is: K <- M -> N -> K
+Now compute the counterfactual effect on K of doubling M. You will need to account for both the
+direct and indirect paths of causation. Use the counterfactual example from the chapter (starting on
+page 140) as a template.
+
+
+```{r}
+data(milk)
+d <- milk
+
+d$K <- standardize( d$kcal.per.g ) 
+d$N <- standardize( d$neocortex.perc )
+d$M <- standardize( log(d$mass) )
+
+dcc <- d[ complete.cases(d$K,d$N,d$M) , ]
+
+# Compute new model
+m5.7 <- quap(
+  alist(
+    ## M -> K <- N
+    K ~ dnorm( mu , sigma ) ,
+    mu <- a + bN*N + bM*M ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bN ~ dnorm( 0 , 0.5 ) ,
+    bM ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 ),
+    ## M -> N
+    N ~ dnorm( mu_N , sigma_N ),
+    mu_N <- aN + bMN*M,
+    aN ~ dnorm( 0 , 0.2 ),
+    bMN ~ dnorm( 0 , 0.5 ),
+    sigma_N ~ dexp( 1 )
+  ) , data=dcc )
+precis(m5.7)
+
+# the counterfactual effect on K of doubling M
+# new data frame, standardized to mean 16.6 and std dev 23.6
+sim2_dat <- data.frame( M=(c(dcc$mass,dcc$mass*2)-16.6)/23.6 )
+s2 <- sim( m5.7, data=sim2_dat , vars=c("N","K") )
+mean( s2$K[,18:34] - s2$K[,1:17] )
+
+# Doubling the mass would decrease the milk's energy by ~0.22 standard deviations according to the new model
+
+```
+
+5H4. Here is an open practice problem to engage your imagination. In the divorce date, States in
+the southern United States have many of the highest divorce rates. Add the South indicator variable
+to the analysis. First, draw one or more DAGs that represent your ideas for how Southern American
+culture might influence any of the other three variables (D, M or A). Then list the testable implications
+of your DAGs, if there are any, and fit one or more models to evaluate the implications. What do you
+think the influence of “Southerness” is?
+
+```{r}
+library(rethinking)
+library(dagitty)
+
+# I assume that the Southern American culture might influence all of the three variables directly.
+# Their ideas of what marriage and divorce means influences the age at which people get married, how common it is for people to marry, and how common it is for people to divorce.
+dag5.4 <- dagitty( "dag{ S -> A; S -> M; S -> D; M -> A; A -> D }" )
+coordinates(dag5.4) <- list( x=c(S=1,A=1,D=2,M=0) , y=c(S=1,A=0,D=0,M=0) )
+drawdag( dag5.4 )
+
+impliedConditionalIndependencies( dag5.4 )
+
+data(WaffleDivorce) 
+d <- WaffleDivorce
+
+# standardize variables
+d$D <- standardize( d$Divorce )
+d$M <- standardize( d$Marriage )
+d$A <- standardize( d$MedianAgeMarriage )
+
+# Compute new model
+H5.4 <- quap(
+  alist(
+    ## S -> D <- A
+    D ~ dnorm( mu , sigma ) ,
+    mu <- a + bS*South + bA*A ,
+    a ~ dnorm( 0 , 0.2 ) ,
+    bS ~ dnorm( 0 , 0.5 ) ,
+    bA ~ dnorm( 0 , 0.5 ) ,
+    sigma ~ dexp( 1 ),
+    ## S -> A <- M 
+    A ~ dnorm( mu_A , sigma_A ),
+    mu_A <- aA + bSA*South + bMA*M,
+    aA ~ dnorm( 0 , 0.2 ),
+    bSA ~ dnorm( 0 , 0.5 ),
+    bMA ~ dnorm( 0 , 0.5 ),
+    sigma_A ~ dexp( 1 ),
+    ## S -> M
+    M ~ dnorm( mu_M , sigma_M ),
+    mu_M <- aM + bSM*South,
+    aM ~ dnorm( 0 , 0.2 ),
+    bSM ~ dnorm( 0 , 0.5 ),
+    sigma_M ~ dexp( 1 )
+  ) , data=d )
+
+precis(H5.4)
+
+## testable implications
+#1. If being a Southern state somehow influences divorce rate directly, then divorce rate should change going from a Northern to a Southern state, even if M & A stay constant
+
+# the counterfactual effect on D of changing South from 0 to 1
+sim2_dat <- data.frame( South=c(0,1), M=c(0,0), A=c(0,0))
+s2 <- sim( H5.4, data=sim2_dat , vars="D" )
+mean( s2[,2] - s2[,1] )
+
+# The divorce rate increases by 0.3 SD
+
+#2. If being a Southern state somehow influences marriage rate directly, then marriage rate should change going from a Northern to a Southern state, even if D & A stay constant
+sim2_dat <- data.frame( South=c(0,1), D=c(0,0), A=c(0,0))
+s2 <- sim( H5.4, data=sim2_dat , vars="M" )
+mean( s2[,2] - s2[,1] )
+
+# The marriage rate increases by 0.15 SD
+
+#3. If being a Southern state somehow influences median marriage age directly, then median marriage age should change going from a Northern to a Southern state, even if D & M stay constant
+sim2_dat <- data.frame( South=c(0,1), D=c(0,0), M=c(0,0))
+s2 <- sim( H5.4, data=sim2_dat , vars="A" )
+mean( s2[,2] - s2[,1] )
+
+# The median age of marriage decreases by 0.35 SD
+
+## Southerness seems to increase divorce rate, increase marriage rate, and decrease median marriage age
+```
+
